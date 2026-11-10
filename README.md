@@ -1,7 +1,7 @@
-# FDM Forward Deployed AI Engineer
+# Forward Deployed AI Engineer
 
 ## Purpose
-Guided project for the FDM Forward Deployed AI Engineer cohort. Over six sprints we build an AI assistant covering specification, data, API, RAG, agents, a portal, deployment and readiness.
+Guided project Forward Deployed AI Engineer. Over six sprints we build an AI assistant covering specification, data, API, RAG, agents, a portal, deployment and readiness.
 
 ## Folders
 - `spec/`  – specifications and requirements
