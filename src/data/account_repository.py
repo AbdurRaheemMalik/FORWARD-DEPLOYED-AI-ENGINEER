@@ -1,7 +1,7 @@
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from src.models.account import Account
+from src.model.account import Account
 
 
 class AccountRepository:
