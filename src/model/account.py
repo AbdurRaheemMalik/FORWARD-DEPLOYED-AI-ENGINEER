@@ -1,10 +1,8 @@
 from datetime import date
 from decimal import Decimal
-
 from sqlalchemy import Date, ForeignKey, Numeric, String
 from sqlalchemy.orm import Mapped, mapped_column
-
-from base import Base
+from .base import Base
 
 
 class Account(Base):

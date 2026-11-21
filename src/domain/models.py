@@ -48,22 +48,12 @@ ALLOWED_TRANSITIONS: dict[tuple[ComplaintStatus, ComplaintStatus], frozenset[Rol
     # Confirmed by the exercise: only a Supervisor may de-escalate.
     (S.ESCALATED, S.IN_REVIEW): frozenset({Role.SUPERVISOR}),
 }
+CLOSABLE: frozenset[ComplaintStatus] = frozenset({S.IN_REVIEW, S.ESCALATED})
 
-# Statuses that POST /complaints/{id}/close accepts.
-# TODO(contract): confirm against the /close description.
-CLOSABLE: frozenset[ComplaintStatus] = frozenset({S.OPEN, S.IN_REVIEW, S.ESCALATED})
-
-# Compensation strictly above this amount needs approval.
 APPROVAL_THRESHOLD_CAD: Decimal = Decimal("1000.00")
 
 INVALID_TRANSITION = "INVALID_TRANSITION"  # contract error code, HTTP 409
 FORBIDDEN_ROLE = "FORBIDDEN_ROLE"          # contract error code, HTTP 403
-
-
-# ---------------------------------------------------------------------------
-# Helpers: they only look things up in the table above, so no status is
-# hard-coded in a function body.
-# ---------------------------------------------------------------------------
 
 def can_transition(current, target, role) -> bool:
     """True if `role` may move a complaint from `current` to `target` via PATCH."""

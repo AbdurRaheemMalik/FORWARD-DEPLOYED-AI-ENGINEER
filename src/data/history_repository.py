@@ -1,35 +1,31 @@
+from sqlalchemy import func, select
+from sqlalchemy.orm import Session
+from src.model.complaint_status_history import ComplaintStatusHistory as History
+
+
 class HistoryRepository:
-    """complaint_status_history: append-only, so no update or delete methods."""
-
-    def __init__(self, conn):
-        self.conn = conn
-
+    """complaint_status_history is append-only: no update or delete methods."""
+    def __init__(self, session: Session):
+        self._session = session
     def get_for_complaint(self, complaint_id):
-        """The six history columns, oldest first (the order of the contract's Complaint.history)."""
-        return self.conn.execute(
-            """SELECT history_id, complaint_id, old_status, new_status, changed_at, changed_by_role
-               FROM complaint_status_history
-               WHERE complaint_id = %s
-               ORDER BY changed_at, history_id""",
-            (complaint_id,),
-        ).fetchall()
-
+        """The six history columns, oldest first (changed_at, then history_id)."""
+        stmt = (
+            select(History.history_id, History.complaint_id, History.old_status,
+                   History.new_status, History.changed_at, History.changed_by_role)
+            .where(History.complaint_id == complaint_id)
+            .order_by(History.changed_at, History.history_id)
+        )
+        return [dict(row) for row in self._session.execute(stmt).mappings()]
     def next_id(self):
-        """'H' + (highest number + 1), five digits, e.g. H00281 after the seed."""
-        row = self.conn.execute(
-            """SELECT 'H' || LPAD((COALESCE(MAX(CAST(SUBSTRING(history_id FROM 2) AS INTEGER)), 0) + 1)::TEXT,
-                                  5, '0') AS next_id
-               FROM complaint_status_history"""
-        ).fetchone()
-        return row["next_id"]
-
+        """'H' + (highest number + 1), five digits: H00281 after H00280."""
+        highest = self._session.scalar(select(func.max(History.history_id)))
+        number = int(highest[1:]) + 1 if highest else 1
+        return f"H{number:05d}"
     def add(self, complaint_id, old_status, new_status, changed_at, changed_by_role):
         """Insert one row with next_id() and return its history_id."""
         history_id = self.next_id()
-        self.conn.execute(
-            """INSERT INTO complaint_status_history
-                   (history_id, complaint_id, old_status, new_status, changed_at, changed_by_role)
-               VALUES (%s, %s, %s, %s, %s, %s)""",
-            (history_id, complaint_id, old_status, new_status, changed_at, changed_by_role),
-        )
+        self._session.add(History(history_id=history_id, complaint_id=complaint_id,
+                                  old_status=old_status, new_status=new_status,
+                                  changed_at=changed_at, changed_by_role=changed_by_role))
+        self._session.flush()
         return history_id
