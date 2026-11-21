@@ -1,130 +1,96 @@
-# FDM Forward Deployed AI Engineer – Complaint Resolution Assistant
+# Complaint Resolution Assistant
 
-## Purpose
-Guided project for the FDM Forward Deployed AI Engineer cohort. Over six sprints we build an AI assistant for a bank's complaint-handling team, covering specification, data, API, RAG, agents, a portal, deployment and readiness.
-
-This README summarises what exists so far (end of Sprint 2 / start of Sprint 3).
-
-## Progress so far
-
-| Step | What was done | Where |
-|------|---------------|-------|
-| Sprint 1 | Repository structure, `.gitignore`, `.env.example`, first README | repo root |
-| 3.1.1 | SQLAlchemy ORM models and repositories over the Week 2 SQLite database | `src/model/`, `src/data/` |
-| 3.1.2 | Domain rules (statuses, transitions, approval threshold) and domain errors | `src/domain/` |
-| 3.1.x | `ComplaintService`: reads plus status changes and closing, with audit history | `src/services/` |
-| 3.2.1 | FastAPI app, settings, health checks and the first error handler, with tests | `src/api/`, `src/config.py`, `tests/api/` |
-
-## Folders
-```
-spec/      specifications and requirements
-docs/      team docs; docs/database/bank.db is the local SQLite database (not committed)
-data/      sample and test data (no sensitive data committed)
-src/
-  config.py          settings, read from .env / environment variables
-  model/             SQLAlchemy ORM tables
-  data/              database manager and repositories (data access only, no business rules)
-  domain/            business rules and domain errors (no database code)
-  services/          ComplaintService: applies the rules using the repositories
-  api/               FastAPI app, routers and error responses
-tests/     automated tests (pytest)
-```
+FDM Forward Deployed AI Engineer cohort project: an AI assistant for a bank's complaint-handling team, built over six sprints. The API follows **openapi contract v2.2.0**.
 
 ## Architecture
-Requests flow through four layers, each depending only on the one below it:
 
 ```
-api (FastAPI routers)  ->  services (ComplaintService)  ->  data (repositories)  ->  model (ORM) / bank.db
-                                    |
-                                    v
-                         domain (rules + errors)
+src/
+├── config.py                      settings, read from .env
+├── api/                           HTTP layer (FastAPI)
+│   ├── main.py                    create_app(): wires routers and error handlers
+│   ├── deps.py                    actor headers, service dependency
+│   ├── schemas.py                 strict request/response models (contract v2.2.0)
+│   ├── errors.py                  error envelope
+│   └── routers/
+│       ├── health.py              /health/live, /health/ready
+│       ├── customers.py           T-001, T-002
+│       └── complaints.py          T-003, T-008, T-009
+├── services/
+│   └── complaint_service.py       one transaction per operation, applies the rules
+├── domain/                        business rules, no database code
+│   ├── models.py                  statuses, transitions, approval threshold
+│   └── errors.py                  domain errors with code and HTTP status
+├── data/                          data access, no business rules
+│   ├── database_manager.py        engine and transaction()
+│   ├── customer_repository.py
+│   ├── account_repository.py
+│   ├── complaint_repository.py
+│   ├── history_repository.py
+│   └── service_request_repository.py
+└── model/                         SQLAlchemy ORM tables
+    ├── customer.py
+    ├── account.py
+    ├── employee.py
+    ├── complaint.py
+    ├── complaint_status_history.py
+    └── service_request.py
 ```
 
-- **`DatabaseManager`** ([src/data/database_manager.py](src/data/database_manager.py)) creates the engine (SQLite, foreign keys on) and exposes `transaction()`, a context manager that commits on success and rolls back on any exception.
-- **Repositories** take a session and only read/write rows: `CustomerRepository`, `AccountRepository`, `ComplaintRepository`, `HistoryRepository` (append-only, no update/delete) and `ServiceRequestRepository`.
-- **`ComplaintService`** ([src/services/complaint_service.py](src/services/complaint_service.py)) opens one transaction per operation, checks the domain rules, then writes. Repositories and the clock (`today`) are injectable so the service can be tested with fakes.
-- **`create_app(db=None, service=None)`** ([src/api/main.py](src/api/main.py)) builds the FastAPI app; tests pass their own db/service objects.
+Each layer only calls the one below it. `src/config.py` is the single place settings are read.
 
-### Database tables (ORM models)
-`customer`, `account`, `employee`, `complaint`, `complaint_status_history`, `service_request`.
+### API: [src/api/](src/api/)
+| Route | Op | Roles |
+|---|---|---|
+| `GET /health/live`, `GET /health/ready` | — | none |
+| `GET /customers/{customer_id}` | T-001 | Analyst, Supervisor |
+| `GET /customers/{customer_id}/accounts` | T-002 | Analyst, Supervisor |
+| `GET /complaints/{complaint_id}` | T-003 | Analyst, Supervisor |
+| `PATCH /complaints/{complaint_id}/status` | T-008 | Analyst, Supervisor (per transition) |
+| `POST /complaints/{complaint_id}/close` | T-009 | Supervisor |
 
-## Domain rules
-Defined in [src/domain/models.py](src/domain/models.py).
+- **Identity:** `X-Actor-Id` (`EMP000`), `X-Actor-Role`, `X-Actor-Type` (`human`/`agent`); missing or invalid → 401 ([deps.py](src/api/deps.py)).
+- **Schemas** ([schemas.py](src/api/schemas.py)) are strict allow-lists: unknown request fields → 422, responses carry contract fields only.
+- **Errors** ([errors.py](src/api/errors.py)) all use `{"error": {code, message, correlation_id, retryable}}`.
 
-**Enums:** `ComplaintStatus` (Open, In Review, Pending Approval, Escalated, Closed), `Category` (6 values), `Priority` (Low/Medium/High), `Channel` (Phone/Email/Branch/Web), `Role` (Analyst/Supervisor).
+### Service: [src/services/complaint_service.py](src/services/complaint_service.py)
+`get_customer`, `get_accounts`, `get_complaint`, `change_status`, `close`. Every write appends a history row and returns an `audit_event_id` (`H00006` → `AUD-000006`). Repositories and the clock are injectable, so tests run on fakes.
 
-**Status changes** (`change_status`):
+### Domain: [src/domain/](src/domain/)
+| Transition | Roles |
+|---|---|
+| Open → In Review | Analyst, Supervisor |
+| In Review → Escalated | Analyst, Supervisor |
+| Escalated → In Review | Supervisor |
+| Close (from In Review or Escalated) | Supervisor; compensation > CAD 1,000.00 needs approval |
 
-| From | To | Allowed roles |
-|------|----|---------------|
-| Open | In Review | Analyst, Supervisor |
-| In Review | Escalated | Analyst, Supervisor |
-| Escalated | In Review | Supervisor only |
+| Error | HTTP |
+|---|---|
+| `NOT_FOUND` | 404 |
+| `FORBIDDEN_ROLE` | 403 |
+| `INVALID_TRANSITION`, `APPROVAL_REQUIRED` | 409 |
+| `DEPENDENCY_UNAVAILABLE` (database down) | 503 |
 
-Anything else is `INVALID_TRANSITION`; a valid transition by the wrong role is `FORBIDDEN_ROLE`.
+### Data and model: [src/data/](src/data/), [src/model/](src/model/)
+`DatabaseManager.transaction()` commits on success and rolls back on any error. Tables: `customer`, `account`, `employee`, `complaint`, `complaint_status_history` (append-only), `service_request`.
 
-**Closing** (`close`): only a Supervisor, only from Open, In Review or Escalated, and compensation must be **at most CAD 1,000.00** – anything strictly above needs approval (`APPROVAL_REQUIRED`).
+## Run
 
-Every status change or close appends a row to `complaint_status_history`, and the response includes an `audit_event_id` (e.g. history `H00281` → `AUD-000281`).
-
-## Errors
-Domain errors ([src/domain/errors.py](src/domain/errors.py)) carry a contract code and HTTP status:
-
-| Error | Code | HTTP |
-|-------|------|------|
-| `CustomerNotFound` | `CUSTOMER_NOT_FOUND` | 404 |
-| `ComplaintNotFound` | `COMPLAINT_NOT_FOUND` | 404 |
-| `ForbiddenRole` | `FORBIDDEN_ROLE` | 403 |
-| `InvalidTransition` | `INVALID_TRANSITION` | 409 |
-| `ApprovalRequired` | `APPROVAL_REQUIRED` | 409 |
-
-All API errors use one body shape:
-```json
-{"error": {"code": "...", "message": "...", "correlation_id": "", "retryable": false}}
-```
-So far only database outages are mapped (SQLAlchemy `OperationalError` → 503 `DEPENDENCY_UNAVAILABLE`, `retryable: true`). Mapping the domain errors is planned for Exercise 3.3.2.
-
-## API endpoints
-
-| Method | Path | Purpose |
-|--------|------|---------|
-| GET | `/health/live` | Process is up. Never touches the database. → `{"status": "ok"}` |
-| GET | `/health/ready` | Database answers `SELECT 1`. → `{"status": "ready", "checks": {"complaint_db": "ok"}}`, or 503 if the database is down |
-
-## Configuration
-[src/config.py](src/config.py) is the single place settings are read (from the root `.env` or real environment variables):
-
-| Variable | Default |
-|----------|---------|
-| `DB_PATH` | `docs/database/bank.db` |
-| `DB_HOST` | `127.0.0.1` |
-| `DB_PORT` | `5432` |
-| `DB_NAME` | `complaints_training` |
-| `LOG_LEVEL` | `INFO` |
-
-Copy `.env.example` to `.env` and fill in values locally. Never commit `.env`.
-
-## Prerequisites
-- Git installed and configured (`user.name`, `user.email`)
-- Python 3.11+ (and Node.js LTS for the portal later)
-- Packages: `fastapi`, `uvicorn`, `sqlalchemy`, `httpx` (for FastAPI's `TestClient`), `pytest`, and optionally `python-dotenv`
-
-## Running locally
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
 pip install fastapi uvicorn sqlalchemy httpx pytest python-dotenv
-
-# start the API (from the repo root)
-uvicorn src.api.main:app --reload
-# then open http://127.0.0.1:8000/health/live or /docs
-
-# run the tests
-python -m pytest -q
+uvicorn src.api.main:app --reload      # http://localhost:8000/docs
+python -m pytest -q                    # 21 passed, 2 xfailed
 ```
 
-## Tests
-- [tests/api/test_health.py](tests/api/test_health.py) – `/health/live` works with no database; `/health/ready` returns the 503 error body when the database is down while `/health/live` still answers.
-- [tests/test_repositories.py](tests/test_repositories.py) – placeholder, still empty.
+Copy `.env.example` to `.env` for local settings (`DB_PATH` defaults to `docs/database/bank.db`). Never commit `.env`.
 
-## Next exercise
-3.3.x: add the complaint/customer endpoints and map the domain errors to the contract error body (3.3.2).
+## Tests
+- `tests/api/`: health checks and one smoke test per route, on in-memory fakes ([tests/fakes.py](tests/fakes.py)).
+- `tests/test_repositories.py`: repositories against a temporary SQLite file.
+
+## Known gaps
+- The ORM models don't match the repositories yet (`date_closed`, history IDs, `changed_by_role`); two strict xfail tests track this.
+- `docs/database/bank.db` is the Week 2 data, not the seeded contract data.
+- `deps.py` is a stand-in for the course starter.
+- Next (3.3.x): 422/405/500/504 in the error envelope, correlation IDs, atomic write tests.
