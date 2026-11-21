@@ -74,17 +74,6 @@ Each layer only calls the one below it. `src/config.py` is the single place sett
 ### Data and model: [src/data/](src/data/), [src/model/](src/model/)
 `DatabaseManager.transaction()` commits on success and rolls back on any error. Tables: `customer`, `account`, `employee`, `complaint`, `complaint_status_history` (append-only), `service_request`.
 
-## Run
-
-```bash
-python3 -m venv .venv && source .venv/bin/activate
-pip install fastapi uvicorn sqlalchemy httpx pytest python-dotenv
-uvicorn src.api.main:app --reload      # http://localhost:8000/docs
-python -m pytest -q                    # 21 passed, 2 xfailed
-```
-
-Copy `.env.example` to `.env` for local settings (`DB_PATH` defaults to `docs/database/bank.db`). Never commit `.env`.
-
 ## Tests
 - `tests/api/`: health checks and one smoke test per route, on in-memory fakes ([tests/fakes.py](tests/fakes.py)).
 - `tests/test_repositories.py`: repositories against a temporary SQLite file.
